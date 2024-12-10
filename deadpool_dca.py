@@ -386,29 +386,46 @@ class TracerPIN(Tracer):
             input_stdin=b''
         if input_args is None:
             input_args=[]
+        
         cmd_list=[tracerpin_exec, '-q', '1', '-b', '0', '-c', '0', '-i', '0', '-f', str(self.addr_range), '-o', self.tmptracefile, '--'] + self.target + input_args
         output=self._exec(cmd_list, input_stdin)
         oblock=self.processoutput(output, self.blocksize)
         self._trace_init(n, iblock, oblock)
-        with open(self.tmptracefile, 'r') as trace:
-            for line in iter(trace.readline, ''):
-                if len(line) > 2 and (line[1]=='R' or line[1]=='W'):
-                    m=re.search(r'\[(.)\] *([0-9]+)(0x[0-9a-fA-F]+) *(0x[0-9a-fA-F]+) *size= *([0-9]+) *value= *(.*)', line)
-                    assert m is not None
-                    mem_mode=m.group(1)
-                    item=int(m.group(2))
-                    ins_addr=int(m.group(3), 16)
-                    mem_addr=int(m.group(4), 16)
-                    mem_size=int(m.group(5), 16)
-                    mem_data=int(m.group(6).replace(" ",""), 16)
-                    for f in self.filters:
-                        if mem_mode in f.modes and f.condition(self.stack_range, mem_addr, mem_size, mem_data):
-                            if f.record_info:
-                                self._trace_info[f.keyword].append((mem_mode, item, ins_addr, mem_addr, mem_size, mem_data))
-                            self._trace_data[f.keyword].append(f.extract(mem_addr, mem_size, mem_data))
+        
+        try:
+            with open(self.tmptracefile, 'r') as trace:
+                for line in iter(trace.readline, ''):
+                    if len(line) > 2 and (line[1]=='R' or line[1]=='W'):
+                        m=re.search(r'\[(.)\] *([0-9]+) *(0x[0-9a-fA-F]+) *(0x[0-9a-fA-F]+) *size= *([0-9]+) *value= *(.*)', line)
+                        if m is None:
+                            continue
+                        
+                        try:
+                            mem_mode=m.group(1)
+                            item=int(m.group(2))
+                            ins_addr=int(m.group(3), 16)
+                            mem_addr=int(m.group(4), 16)
+                            mem_size=int(m.group(5))
+                            mem_data=int(m.group(6).replace(" ",""), 16)
+                        except (ValueError, IndexError):
+                            continue
+
+                        for f in self.filters:
+                            if mem_mode in f.modes and f.condition(self.stack_range, mem_addr, mem_size, mem_data):
+                                if f.record_info:
+                                    self._trace_info[f.keyword].append((mem_mode, item, ins_addr, mem_addr, mem_size, mem_data))
+                                self._trace_data[f.keyword].append(f.extract(mem_addr, mem_size, mem_data))
+        except IOError:
+            print("Warning: Could not read trace file")
+            return None
+
         self._trace_dump()
         if not self.debug:
-            os.remove(self.tmptracefile)
+            try:
+                os.remove(self.tmptracefile)
+            except OSError:
+                pass
+                
         return oblock
 
     def run_once(self, iblock=None, tracefile=None):
